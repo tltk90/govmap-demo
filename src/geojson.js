@@ -71,20 +71,29 @@ function labelFor(props, index) {
 }
 
 // Human-readable Hebrew labels for the raw mismatch_type codes in the data.
-const MISMATCH_LABELS = {
+export const MISMATCH_LABELS = {
   outside: 'קלפי מחוץ לכל השכונות',
   mismatch: 'שכונה מועמדת שאינה מותאמת',
 }
 
-// HTML template shown in the click bubble; {0}..{4} are filled per geometry
-// from the bubbleHTMLParameters row built in `featureMeta`.
+// HTML template shown in the click bubble; {0}..{5} are filled per geometry
+// from the bubbleHTMLParameters row built in `featureMeta`. {0} is the title.
+//
+// The title is rendered here (in the body) rather than via displayGeometries'
+// `headers` field on purpose. govmap keeps only a single active `headers`
+// array (the last call's) and indexes it by each geometry's index WITHIN ITS
+// OWN call — so with two layers (polygons + points) no single `headers` array
+// can title both correctly (points' local indices collide with polygons').
+// bubbleHTMLParameters, by contrast, are indexed per call, so the title stays
+// correct for every geometry in every layer.
 export const BUBBLE_HTML =
   '<div style="direction:rtl;text-align:right;font-family:system-ui,sans-serif;min-width:220px;line-height:1.6">' +
-  '<div><b>סוג אי-התאמה:</b> {0}</div>' +
-  '<div><b>סיבה:</b> {1}</div>' +
-  '<div><b>קוד יישוב:</b> {2}</div>' +
-  '<div><b>שכונה:</b> {3}</div>' +
-  '<div><b>ריכוז:</b> {4}</div>' +
+  '<div style="font-weight:700;font-size:16px;margin-bottom:8px">{0}</div>' +
+  '<div><b>סוג אי-התאמה:</b> {1}</div>' +
+  '<div><b>סיבה:</b> {2}</div>' +
+  '<div><b>קוד יישוב:</b> {3}</div>' +
+  '<div><b>שכונה:</b> {4}</div>' +
+  '<div><b>ריכוז:</b> {5}</div>' +
   '</div>'
 
 // Extracts what the tooltip (hover) and bubble (click) should show for a
@@ -98,19 +107,25 @@ function featureMeta(props) {
   const typeLabel = MISMATCH_LABELS[type] || type || '—'
   const dash = (v) => (v === undefined || v === null || v === '' ? '—' : String(v))
 
+  const header = [town, code != null ? `(${code})` : ''].filter(Boolean).join(' ') || '—'
+
   return {
-    // header: bubble title; tooltip: concise hover text.
-    header: [town, code != null ? `(${code})` : ''].filter(Boolean).join(' ') || '—',
+    // header: bubble title (rendered as {0} of the body); tooltip: hover text.
+    header,
     tooltip: [town, typeLabel].filter(Boolean).join(' — '),
-    // Order must match the {0}..{4} placeholders in BUBBLE_HTML.
-    params: [typeLabel, dash(props.reason), dash(code), dash(neighborhood), dash(cluster)],
+    // Order must match the {0}..{5} placeholders in BUBBLE_HTML ({0} = title).
+    params: [header, typeLabel, dash(props.reason), dash(code), dash(neighborhood), dash(cluster)],
   }
 }
 
 // Splits a FeatureCollection into per-geometry-type payloads (displayGeometries
 // takes a single geometryType per call). MultiPolygons are flattened into their
 // constituent polygons.
-export function toDisplayGroups(featureCollection) {
+//
+// `filter` is an optional predicate(props) -> boolean; features for which it
+// returns false are skipped. The forEach index still advances over skipped
+// features, so the labels of the remaining ones stay unique.
+export function toDisplayGroups(featureCollection, filter = null) {
   const points = emptyGroup()
   const polygons = emptyGroup()
 
@@ -119,6 +134,7 @@ export function toDisplayGroups(featureCollection) {
     const geom = feature?.geometry
     if (!geom) return
     const props = feature.properties ?? {}
+    if (filter && !filter(props)) return
     const meta = featureMeta(props)
 
     if (geom.type === 'Point') {
